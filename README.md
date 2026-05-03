@@ -78,9 +78,9 @@ When company is "None" and context is ambiguous, the agent escalates rather than
 ## Files
 
 ```
-triage_agent/
-├── agent.py                          # Main terminal agent
-├── README.md                         # This file
+triage_agent/hackerrank-orchestratte-may26/
+├── code/
+    ├── main.py                       # Main terminal agent                                                  # This file
 └── support_tickets/
     ├── support_tickets.csv           # Input (29 tickets)
     ├── sample_support_tickets.csv    # Reference examples
