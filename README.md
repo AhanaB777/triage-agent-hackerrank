@@ -1,88 +1,203 @@
 # Multi-Domain Support Triage Agent
-### HackerRank Orchestrate Competition
 
-A terminal-based AI support triage agent for **HackerRank**, **Claude**, and **Visa**.
+> HackerRank Orchestrate — May 2026
+
+A terminal-based AI support triage agent that classifies and responds to customer support tickets across **HackerRank**, **Claude (Anthropic)**, and **Visa** using a semantic RAG pipeline. No external API required — runs fully locally.
 
 ---
 
-## Quick Start
+## Demo
 
-```bash
-# 1. Install dependencies
-pip install requests
-
-# 2. Set your Anthropic API key
-export ANTHROPIC_API_KEY=sk-ant-...
-
-# 3. Run the agent
-python3 agent.py
 ```
+╔══════════════════════════════════════════════════════════╗
+║       Multi-Domain Support Triage Agent  v1.0            ║
+║       Architecture: Semantic RAG + Rule-based Escalation ║
+║       Model: all-MiniLM-L6-v2 (local, no API required)  ║
+╚══════════════════════════════════════════════════════════╝
 
-Output is written to `support_tickets/output.csv`.
+Loaded 29 tickets from support_tickets/support_tickets.csv
+
+─────────────────────────────────────────────────────────
+[1/29]  Claude  │  Claude access lost
+       I lost access to my Claude team workspace...
+       Status:  ⚠ escalated
+       Area:    account_access  │  Type: product_issue
+       Reply:   Claude support cannot restore workspace seats on behalf of non-admin users...
+```
 
 ---
 
 ## Architecture
 
 ```
-support_tickets.csv  ─→  agent.py  ─→  Claude API (claude-sonnet-4)  ─→  output.csv
-                            │
-                     [System Prompt]
-                            │
-                     ┌──────────────────┐
-                     │  Support Corpus  │
-                     │  • HackerRank    │
-                     │  • Claude        │
-                     │  • Visa          │
-                     └──────────────────┘
-                            │
-                     ┌──────────────────┐
-                     │  Few-Shot        │
-                     │  Examples (5)    │
-                     └──────────────────┘
+Ticket Input (issue + subject)
+        │
+        ▼
+┌─────────────────────┐
+│  Injection Check    │ ──── TRUE ──→ Reply: out of scope  [EXIT]
+│  (regex, 3 langs)   │
+└─────────────────────┘
+        │ FALSE
+        ▼
+┌─────────────────────┐
+│  Semantic Retrieval │
+│  all-MiniLM-L6-v2   │
+│  cosine similarity  │
+│  vs 35 corpus chunks│
+└─────────────────────┘
+        │
+        ▼
+┌─────────────────────┐
+│  Similarity < 0.30? │ ──── TRUE ──→ Escalate: low confidence  [EXIT]
+└─────────────────────┘
+        │ FALSE
+        ▼
+┌─────────────────────┐
+│  Hard Keyword Rules │ ──── TRUE ──→ force_escalate = True (continues)
+│  refund, fraud...   │
+└─────────────────────┘
+        │
+        ▼
+┌─────────────────────┐
+│  Corpus Escalation  │
+│  Flag Check         │
+│  (OR logic)         │
+└─────────────────────┘
+        │
+        ▼
+┌─────────────────────┐
+│  Structured Output  │
+│  → output.csv       │
+└─────────────────────┘
 ```
 
-## Key Design Decisions
+**Key design choice:** This is a retrieve-and-return architecture rather than retrieve-and-generate. Responses come directly from pre-written grounded corpus chunks — there is no LLM generation step, making hallucination architecturally impossible.
 
-### 1. Grounded Corpus (No Hallucination)
-The agent uses an inline support corpus scraped from official support sites. Claude is instructed to use **only this corpus** and never fabricate policies, phone numbers, or URLs.
+---
 
-### 2. Smart Escalation Logic
-The agent escalates when:
-- Billing/refund/subscription issues (require human access to billing systems)
-- Platform-wide outages (require engineering)
-- Fraud, identity theft (require immediate human intervention)
-- Security vulnerabilities (must go through proper disclosure channels)
-- Account access issues requiring identity verification
-- Ambiguous tickets with high-risk mis-routing potential
+## Features
 
-### 3. Prompt Injection Detection
-The agent identifies and safely handles prompt injection attempts embedded in tickets (e.g., Ticket #25 in French asking for internal system rules).
+- **Semantic RAG pipeline** — sentence-transformers for contextual matching, not keyword rules
+- **No external API** — runs fully locally after first model download, zero cost, no rate limits
+- **Dual-layer escalation** — hard keyword rules + corpus escalation flags work together
+- **Multilingual injection detection** — regex patterns for English, French, and Spanish
+- **Deterministic output** — numpy seed fixed, same input always produces same output
+- **Graceful degradation** — similarity below 0.30 escalates instead of guessing
+- **Colored terminal UI** — per-ticket status, area, type, and response preview
 
-### 4. Multi-language Support
-The agent processes tickets in any language (demonstrated by French ticket #25).
+---
 
-### 5. Safety Over Completeness
-When company is "None" and context is ambiguous, the agent escalates rather than risk wrong routing.
+## Project Structure
+
+```
+hackerrank-orchestrate-may26/
+├── AGENTS.md
+├── README.md                        ← you are here
+├── .env.example
+├── code/
+│   ├── main.py                      ← agent entry point
+│   └── README.md                    ← setup instructions
+└── support_tickets/
+    ├── support_tickets.csv          ← input (29 tickets)
+    ├── sample_support_tickets.csv   ← labeled examples
+    └── output.csv                   ← agent predictions
+```
+
+---
+
+## Setup
+
+**Requirements:**
+- Python 3.8+
+- No API key needed
+
+**Install dependencies:**
+```bash
+pip install sentence-transformers numpy
+```
+
+**Run the agent:**
+```bash
+cd code
+python main.py
+```
+
+Output is saved to `support_tickets/output.csv`.
+
+On first run, the sentence-transformers model (~90MB) will download automatically from Hugging Face. Subsequent runs use the cached model.
+
+---
 
 ## Output Schema
 
-| Field | Values |
-|-------|--------|
-| `status` | `replied` \| `escalated` |
-| `product_area` | screen, billing, privacy, etc. |
-| `request_type` | `product_issue` \| `feature_request` \| `bug` \| `invalid` |
-| `response` | User-facing message grounded in corpus |
-| `justification` | Internal triage reasoning |
+Each row in `output.csv` contains five fields:
 
-## Files
+| Field | Description | Values |
+|---|---|---|
+| `status` | Triage decision | `replied` or `escalated` |
+| `product_area` | Support category | `screen`, `billing`, `privacy`, `fraud_security`, etc. |
+| `request_type` | Issue classification | `product_issue`, `feature_request`, `bug`, `invalid` |
+| `response` | User-facing answer grounded in corpus | Full text |
+| `justification` | Internal reasoning with similarity score | Full text |
+
+---
+
+## Results
 
 ```
-triage_agent/hackerrank-orchestratte-may26/
-├── code/
-    ├── main.py                       # Main terminal agent                                                  # This file
-└── support_tickets/
-    ├── support_tickets.csv           # Input (29 tickets)
-    ├── sample_support_tickets.csv    # Reference examples
-    └── output.csv                    # Generated output
+Total tickets : 29
+Replied       : 18  (62%)
+Escalated     : 11  (38%)
+Errors        : 0
 ```
+
+**Escalation triggers used:**
+- Billing, refunds, subscription changes
+- Fraud, identity theft, unauthorized transactions
+- Platform-wide outages
+- Security vulnerability reports
+- Account access requiring admin verification
+- Ambiguous tickets below similarity threshold
+- Prompt injection attempts
+
+---
+
+## Supported Domains
+
+| Company | Coverage |
+|---|---|
+| HackerRank | Tests, assessments, interviews, billing, user management, community, infosec |
+| Claude | Account access, privacy, outages, security, web crawling, API/developer, education |
+| Visa | Disputes, lost/stolen cards, identity theft, emergency cash, travel, merchant policy |
+
+---
+
+## Design Decisions
+
+**Why RAG over a pure LLM call?**
+RAG forces the agent to use only what is in the corpus. A plain LLM call risks hallucinating policies, phone numbers, or steps that do not exist in the actual support documentation.
+
+**Why sentence-transformers / all-MiniLM-L6-v2?**
+Lightweight (90MB), fast on CPU, no API dependency. Designed specifically for semantic similarity tasks. Sufficient for matching support tickets to known documentation patterns.
+
+**Why a 0.30 similarity threshold?**
+Conservative by design — in a support context, a wrong answer is worse than escalating. Below 0.30 the match is too weak to trust.
+
+**Why retrieve-and-return instead of retrieve-and-generate?**
+Determinism and grounding. Every response is exactly what the corpus says, traceable to the source documentation, with zero risk of the model paraphrasing a policy incorrectly.
+
+---
+
+## Known Limitations
+
+- Corpus is English-only — legitimate non-English tickets may score low similarity and escalate unnecessarily
+- Static similarity threshold — optimal value may vary for different ticket distributions
+- No cross-ticket memory — each ticket is processed independently
+- Novel ticket types with no close corpus match fall back to escalation (safe default, but increases human workload)
+
+---
+
+## Chat Transcript
+
+Built during the HackerRank Orchestrate 24-hour hackathon (May 1–2, 2026).
+Full AI collaboration log: `%USERPROFILE%\hackerrank_orchestrate\log.txt`
